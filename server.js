@@ -6,10 +6,11 @@ import axios from 'axios';
 
 const app = express();
 
-// CORS
+// CORS（确保前端跨域请求被允许）
 app.use((req, res, next) => {
   res.header('Access-Control-Allow-Origin', '*');
-  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept');
+  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
+  res.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
   if (req.method === 'OPTIONS') {
     res.sendStatus(200);
     return;
@@ -74,35 +75,26 @@ server.tool(
   })
 );
 
-// ===== 创建 transport =====
+// ===== 创建 transport（用于 /mcp） =====
 const transport = new StreamableHTTPServerTransport({
   sessionIdGenerator: () => crypto.randomUUID()
 });
 
-// ===== 根路径：同时处理 GET 和 POST =====
-app.all('/', async (req, res) => {
-  // 如果是 GET 请求（且不是 SSE 握手），返回模拟的初始化响应，让前端测试通过
-  if (req.method === 'GET' && !req.headers.accept?.includes('text/event-stream')) {
-    return res.json({
-      jsonrpc: "2.0",
-      id: 0,
-      result: {
-        protocolVersion: "1.0",
-        serverInfo: { name: "xhs-reader", version: "1.0" }
-      }
-    });
-  }
-  
-  // 其他请求（POST、或带有 SSE Accept 的 GET）交给 transport
-  try {
-    await transport.handleRequest(req, res);
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
+// ===== 根路径：专门骗前端测试（返回固定格式） =====
+app.get('/', (req, res) => {
+  res.json({
+    jsonrpc: "2.0",
+    id: 0,
+    result: {
+      protocolVersion: "1.0",
+      serverInfo: { name: "xhs-reader", version: "1.0.0" },
+      capabilities: { tools: {} }
+    }
+  });
 });
 
-// 备用端点
-app.all('/mcp', async (req, res) => {
+// ===== /mcp：真正的MCP端点（处理POST JSON-RPC） =====
+app.post('/mcp', async (req, res) => {
   try {
     await transport.handleRequest(req, res);
   } catch (error) {
@@ -117,5 +109,6 @@ app.get('/health', (req, res) => res.send('OK'));
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`✅ MCP server running on port ${PORT}`);
-  console.log(`📍 Root endpoint: / (handles GET & POST)`);
+  console.log(`📍 Root GET: / (returns fake init response for testing)`);
+  console.log(`📍 MCP POST: /mcp (real JSON-RPC endpoint)`);
 });
