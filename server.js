@@ -6,7 +6,7 @@ import axios from 'axios';
 
 const app = express();
 
-// CORS 中间件
+// CORS
 app.use((req, res, next) => {
   res.header('Access-Control-Allow-Origin', '*');
   res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept');
@@ -16,24 +16,19 @@ app.use((req, res, next) => {
   }
   next();
 });
-
 app.use(express.json());
 
-// 健康检查
-app.get('/', (req, res) => {
-  res.json({ status: 'ok', service: 'xhs-read-mcp' });
-});
-app.get('/health', (req, res) => {
-  res.send('OK');
-});
+// 健康检查（让前端测试通过）
+app.get('/', (req, res) => res.json({ status: 'ok', service: 'xhs-read-mcp' }));
+app.get('/health', (req, res) => res.send('OK'));
 
-// ===== 创建 MCP 服务器 =====
+// 创建 MCP 服务器
 const server = new McpServer({
   name: 'xhs-reader',
   version: '1.0.0'
 });
 
-// ===== 工具1：读取小红书 =====
+// 工具：读取小红书
 server.tool(
   "xhs_read",
   "读取小红书帖子内容（文字+图片）",
@@ -49,11 +44,8 @@ server.tool(
         realUrl = resp.headers.location;
         if (!realUrl) throw new Error('无法解析短链');
       }
-
       const pageResp = await axios.get(realUrl, {
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-        }
+        headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' }
       });
       const html = pageResp.data;
       const match = html.match(/window\.__INITIAL_STATE__\s*=\s*({.*?});/s);
@@ -65,9 +57,7 @@ server.tool(
       const images = include_images ? (note.imageList || []).map(img => img.url) : [];
 
       return {
-        content: [
-          { type: 'text', text: JSON.stringify({ title, desc, images, url: realUrl }, null, 2) }
-        ]
+        content: [{ type: 'text', text: JSON.stringify({ title, desc, images, url: realUrl }, null, 2) }]
       };
     } catch (error) {
       return {
@@ -78,25 +68,23 @@ server.tool(
   }
 );
 
-// ===== 工具2：聊天历史（占位） =====
+// 占位工具
 server.tool(
   "chat_history",
   "获取会话历史（占位）",
   { session_id: z.string().optional() },
-  async ({ session_id }) => {
-    return {
-      content: [{ type: 'text', text: `会话 ${session_id || 'default'} 历史记录（占位）` }]
-    };
-  }
+  async ({ session_id }) => ({
+    content: [{ type: 'text', text: `会话 ${session_id || 'default'} 历史记录（占位）` }]
+  })
 );
 
-// ===== 使用 StreamableHTTP 传输 =====
+// ===== 关键：使用 StreamableHTTP 传输 =====
 const transport = new StreamableHTTPServerTransport({
   sessionIdGenerator: () => crypto.randomUUID()
 });
 
-// 处理 POST 请求（JSON-RPC）
-app.post('/mcp', async (req, res) => {
+// 统一端点：同时处理 GET（SSE）和 POST（JSON-RPC）
+app.all('/mcp', async (req, res) => {
   try {
     await transport.handleRequest(req, res);
   } catch (error) {
@@ -104,19 +92,9 @@ app.post('/mcp', async (req, res) => {
   }
 });
 
-// 处理 GET 请求（SSE 连接，可选）
-app.get('/sse', async (req, res) => {
-  try {
-    await transport.handleRequest(req, res);
-  } catch (error) {
-    res.status(500).send(error.message);
-  }
-});
-
-// ===== 启动服务器 =====
+// 启动服务器
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`✅ MCP server running on port ${PORT}`);
-  console.log(`📍 POST endpoint: /mcp`);
-  console.log(`📍 SSE endpoint: /sse (optional)`);
+  console.log(`📍 Endpoint: /mcp (supports POST & GET)`);
 });
