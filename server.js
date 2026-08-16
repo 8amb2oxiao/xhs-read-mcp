@@ -18,17 +18,13 @@ app.use((req, res, next) => {
 });
 app.use(express.json());
 
-// 健康检查（让前端测试通过）
-app.get('/', (req, res) => res.json({ status: 'ok', service: 'xhs-read-mcp' }));
-app.get('/health', (req, res) => res.send('OK'));
-
-// 创建 MCP 服务器
+// ===== 创建 MCP 服务器 =====
 const server = new McpServer({
   name: 'xhs-reader',
   version: '1.0.0'
 });
 
-// 工具：读取小红书
+// ===== 工具：读取小红书 =====
 server.tool(
   "xhs_read",
   "读取小红书帖子内容（文字+图片）",
@@ -68,7 +64,7 @@ server.tool(
   }
 );
 
-// 占位工具
+// ===== 占位工具 =====
 server.tool(
   "chat_history",
   "获取会话历史（占位）",
@@ -78,12 +74,21 @@ server.tool(
   })
 );
 
-// ===== 关键：使用 StreamableHTTP 传输 =====
+// ===== 创建 transport =====
 const transport = new StreamableHTTPServerTransport({
   sessionIdGenerator: () => crypto.randomUUID()
 });
 
-// 统一端点：同时处理 GET（SSE）和 POST（JSON-RPC）
+// ===== 让根路径也处理 MCP 请求（这样前端测试就能过） =====
+app.all('/', async (req, res) => {
+  try {
+    await transport.handleRequest(req, res);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// 同时保留 /mcp 端点
 app.all('/mcp', async (req, res) => {
   try {
     await transport.handleRequest(req, res);
@@ -92,9 +97,12 @@ app.all('/mcp', async (req, res) => {
   }
 });
 
-// 启动服务器
+// ===== 健康检查（可选） =====
+app.get('/health', (req, res) => res.send('OK'));
+
+// ===== 启动 =====
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`✅ MCP server running on port ${PORT}`);
-  console.log(`📍 Endpoint: /mcp (supports POST & GET)`);
+  console.log(`📍 Root endpoint: / (handles MCP requests)`);
 });
