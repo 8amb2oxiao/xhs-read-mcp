@@ -1,38 +1,22 @@
 import express from 'express';
+import { SSEServerTransport } from '@modelcontextprotocol/sdk/server/sse.js';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { z } from 'zod';
 import axios from 'axios';
-import { randomUUID } from 'crypto';
 
 const app = express();
 
-// --- 中间件（完整复制 spicy-monopoly） ---
 app.use((req, res, next) => {
-  // 强制 Accept 头，确保前端识别 MCP
-  const desired = 'application/json, text/event-stream';
-  const accept = String(req.headers.accept || '');
-  if (!accept.includes('application/json') || !accept.includes('text/event-stream')) {
-    req.headers.accept = desired;
-  }
-  // CORS
   res.header('Access-Control-Allow-Origin', '*');
   res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept');
   res.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-  if (req.method === 'OPTIONS') {
-    return res.sendStatus(200);
-  }
+  if (req.method === 'OPTIONS') return res.sendStatus(200);
   next();
 });
 app.use(express.json());
 
-// --- 创建 MCP 服务器 ---
-const server = new McpServer({
-  name: 'xhs-reader',
-  version: '1.0.0'
-});
+const server = new McpServer({ name: 'xhs-reader', version: '1.0.0' });
 
-// ==================== 你的工具 ====================
 server.tool(
   "xhs_read",
   "读取小红书帖子内容（文字+图片）",
@@ -44,10 +28,7 @@ server.tool(
     try {
       let realUrl = url;
       if (url.includes('xhslink.com')) {
-        const resp = await axios.get(url, {
-          maxRedirects: 0,
-          validateStatus: (s) => s === 301 || s === 302
-        });
+        const resp = await axios.get(url, { maxRedirects: 0, validateStatus: (s) => s === 301 || s === 302 });
         realUrl = resp.headers.location;
         if (!realUrl) throw new Error('无法解析短链');
       }
@@ -75,7 +56,6 @@ server.tool(
   }
 );
 
-// 占位工具（保留）
 server.tool(
   "chat_history",
   "获取会话历史（占位）",
@@ -85,34 +65,27 @@ server.tool(
   })
 );
 
-// --- 传输层 ---
-const transport = new StreamableHTTPServerTransport({
-  sessionIdGenerator: () => randomUUID()
+let transport;
+
+app.get('/sse', async (req, res) => {
+  transport = new SSEServerTransport('/messages', res);
+  await server.connect(transport);
 });
 
-// --- 路由：根路径和 /mcp 都指向 transport ---
-app.all('/', async (req, res) => {
-  try {
-    await transport.handleRequest(req, res);
-  } catch (error) {
-    res.status(500).json({ error: error.message });
+app.post('/messages', async (req, res) => {
+  if (!transport) {
+    res.status(400).send('No active SSE session');
+    return;
   }
+  await transport.handlePostMessage(req, res);
 });
 
-app.all('/mcp', async (req, res) => {
-  try {
-    await transport.handleRequest(req, res);
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
-
-// 健康检查
 app.get('/health', (req, res) => res.send('OK'));
+app.get('/', (req, res) => res.send('MCP SSE server is running'));
 
-// --- 启动 ---
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, '0.0.0.0', () => {
-  console.log(`✅ MCP server running on port ${PORT}`);
-  console.log(`📍 Endpoint: / or /mcp`);
+  console.log(`✅ MCP SSE server running on port ${PORT}`);
+  console.log(`📍 SSE endpoint: /sse`);
+  console.log(`📍 Message endpoint: /messages`);
 });
