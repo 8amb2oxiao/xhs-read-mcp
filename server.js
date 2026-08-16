@@ -5,15 +5,36 @@ import { z } from 'zod';
 import axios from 'axios';
 
 const app = express();
+
+// ===== CORS 中间件 =====
+app.use((req, res, next) => {
+  res.header('Access-Control-Allow-Origin', '*');
+  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept');
+  if (req.method === 'OPTIONS') {
+    res.sendStatus(200);
+    return;
+  }
+  next();
+});
+
 app.use(express.json());
 
-// ===== 创建 MCP 服务器实例 =====
+// ===== 健康检查端点（让前端测试通过） =====
+app.get('/', (req, res) => {
+  res.json({ status: 'ok', service: 'xhs-read-mcp' });
+});
+
+app.get('/health', (req, res) => {
+  res.send('OK');
+});
+
+// ===== 创建 MCP 服务器 =====
 const server = new McpServer({
   name: 'xhs-reader',
   version: '1.0.0'
 });
 
-// ===== 工具1：读取小红书帖子 =====
+// ===== 工具1：读取小红书 =====
 server.tool(
   "xhs_read",
   "读取小红书帖子内容（文字+图片）",
@@ -23,7 +44,6 @@ server.tool(
   },
   async ({ url, include_images = true }) => {
     try {
-      // 1. 如果是 xhslink.com 短链，先获取重定向后的真实链接
       let realUrl = url;
       if (url.includes('xhslink.com')) {
         const resp = await axios.get(url, { maxRedirects: 0, validateStatus: (s) => s === 301 || s === 302 });
@@ -31,20 +51,15 @@ server.tool(
         if (!realUrl) throw new Error('无法解析短链');
       }
 
-      // 2. 请求小红书页面
       const pageResp = await axios.get(realUrl, {
         headers: {
           'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
         }
       });
       const html = pageResp.data;
-
-      // 3. 提取 __INITIAL_STATE__ 中的 JSON 数据
       const match = html.match(/window\.__INITIAL_STATE__\s*=\s*({.*?});/s);
-      if (!match) throw new Error('未找到初始化数据，可能页面结构已变更');
+      if (!match) throw new Error('未找到初始化数据');
       const state = JSON.parse(match[1]);
-
-      // 4. 解析内容
       const note = state.note?.noteDetailMap?.[state.note?.noteId] || {};
       const title = note.title || '';
       const desc = note.desc || '';
@@ -76,17 +91,12 @@ server.tool(
   }
 );
 
-// ===== 配置 SSE 传输 =====
-// 存储当前活跃的 transport（单客户端场景）
+// ===== SSE 传输（修正后） =====
 let currentTransport = null;
 
 app.get('/sse', async (req, res) => {
-  // 重要：在路由内部创建 transport，传入 res
-  const transport = new SSEServerTransport('/message', res);
-  currentTransport = transport; // 保存以便 /message 使用
-
-  await server.connect(transport);
-  transport.start(req, res);
+  currentTransport = new SSEServerTransport('/message', res);
+  await server.connect(currentTransport); // 这里自动调用 start，不要重复调用
 });
 
 app.post('/message', async (req, res) => {
