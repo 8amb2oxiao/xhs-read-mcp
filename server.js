@@ -6,11 +6,9 @@ import axios from 'axios';
 
 const app = express();
 
-// CORS（确保前端跨域请求被允许）
 app.use((req, res, next) => {
   res.header('Access-Control-Allow-Origin', '*');
-  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
-  res.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept');
   if (req.method === 'OPTIONS') {
     res.sendStatus(200);
     return;
@@ -19,13 +17,11 @@ app.use((req, res, next) => {
 });
 app.use(express.json());
 
-// ===== 创建 MCP 服务器 =====
 const server = new McpServer({
   name: 'xhs-reader',
   version: '1.0.0'
 });
 
-// ===== 工具：读取小红书 =====
 server.tool(
   "xhs_read",
   "读取小红书帖子内容（文字+图片）",
@@ -65,7 +61,6 @@ server.tool(
   }
 );
 
-// ===== 占位工具 =====
 server.tool(
   "chat_history",
   "获取会话历史（占位）",
@@ -75,13 +70,12 @@ server.tool(
   })
 );
 
-// ===== 创建 transport（用于 /mcp） =====
 const transport = new StreamableHTTPServerTransport({
   sessionIdGenerator: () => crypto.randomUUID()
 });
 
-// ===== 根路径：专门骗前端测试（返回固定格式） =====
-app.get('/', (req, res) => {
+// ===== 关键修复：用 app.all 替代 app.get，支持 POST =====
+app.all('/', (req, res) => {
   res.json({
     jsonrpc: "2.0",
     id: 0,
@@ -93,8 +87,7 @@ app.get('/', (req, res) => {
   });
 });
 
-// ===== /mcp：真正的MCP端点（处理POST JSON-RPC） =====
-app.post('/mcp', async (req, res) => {
+app.all('/mcp', async (req, res) => {
   try {
     await transport.handleRequest(req, res);
   } catch (error) {
@@ -102,13 +95,9 @@ app.post('/mcp', async (req, res) => {
   }
 });
 
-// 健康检查（可选）
 app.get('/health', (req, res) => res.send('OK'));
 
-// ===== 启动 =====
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`✅ MCP server running on port ${PORT}`);
-  console.log(`📍 Root GET: / (returns fake init response for testing)`);
-  console.log(`📍 MCP POST: /mcp (real JSON-RPC endpoint)`);
 });
