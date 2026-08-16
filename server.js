@@ -1,12 +1,12 @@
 import express from 'express';
-import { SSEServerTransport } from '@modelcontextprotocol/sdk/server/sse.js';
+import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import axios from 'axios';
 
 const app = express();
 
-// ===== CORS 中间件 =====
+// CORS 中间件
 app.use((req, res, next) => {
   res.header('Access-Control-Allow-Origin', '*');
   res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept');
@@ -19,11 +19,10 @@ app.use((req, res, next) => {
 
 app.use(express.json());
 
-// ===== 健康检查端点（让前端测试通过） =====
+// 健康检查
 app.get('/', (req, res) => {
   res.json({ status: 'ok', service: 'xhs-read-mcp' });
 });
-
 app.get('/health', (req, res) => {
   res.send('OK');
 });
@@ -91,26 +90,33 @@ server.tool(
   }
 );
 
-// ===== SSE 传输（修正后） =====
-let currentTransport = null;
-
-app.get('/sse', async (req, res) => {
-  currentTransport = new SSEServerTransport('/message', res);
-  await server.connect(currentTransport); // 这里自动调用 start，不要重复调用
+// ===== 使用 StreamableHTTP 传输 =====
+const transport = new StreamableHTTPServerTransport({
+  sessionIdGenerator: () => crypto.randomUUID()
 });
 
-app.post('/message', async (req, res) => {
-  if (currentTransport) {
-    await currentTransport.handlePostMessage(req, res);
-  } else {
-    res.status(400).send('No active SSE session');
+// 处理 POST 请求（JSON-RPC）
+app.post('/mcp', async (req, res) => {
+  try {
+    await transport.handleRequest(req, res);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// 处理 GET 请求（SSE 连接，可选）
+app.get('/sse', async (req, res) => {
+  try {
+    await transport.handleRequest(req, res);
+  } catch (error) {
+    res.status(500).send(error.message);
   }
 });
 
 // ===== 启动服务器 =====
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, '0.0.0.0', () => {
-  console.log(`✅ MCP SSE server running on port ${PORT}`);
-  console.log(`📍 SSE endpoint: /sse`);
-  console.log(`📍 Message endpoint: /message`);
+  console.log(`✅ MCP server running on port ${PORT}`);
+  console.log(`📍 POST endpoint: /mcp`);
+  console.log(`📍 SSE endpoint: /sse (optional)`);
 });
