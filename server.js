@@ -64,7 +64,7 @@ server.tool(
   }
 );
 
-// ===== 工具2：聊天历史（占位，可根据需要启用） =====
+// ===== 工具2：聊天历史（占位） =====
 server.tool(
   "chat_history",
   "获取会话历史（占位）",
@@ -77,20 +77,29 @@ server.tool(
 );
 
 // ===== 配置 SSE 传输 =====
-const transport = new SSEServerTransport('/message', app);
+// 存储当前活跃的 transport（单客户端场景）
+let currentTransport = null;
 
 app.get('/sse', async (req, res) => {
+  // 重要：在路由内部创建 transport，传入 res
+  const transport = new SSEServerTransport('/message', res);
+  currentTransport = transport; // 保存以便 /message 使用
+
   await server.connect(transport);
   transport.start(req, res);
 });
 
 app.post('/message', async (req, res) => {
-  await transport.handlePostMessage(req, res);
+  if (currentTransport) {
+    await currentTransport.handlePostMessage(req, res);
+  } else {
+    res.status(400).send('No active SSE session');
+  }
 });
 
 // ===== 启动服务器 =====
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
+app.listen(PORT, '0.0.0.0', () => {
   console.log(`✅ MCP SSE server running on port ${PORT}`);
   console.log(`📍 SSE endpoint: /sse`);
   console.log(`📍 Message endpoint: /message`);
