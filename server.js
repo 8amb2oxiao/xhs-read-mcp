@@ -1,31 +1,38 @@
 import express from 'express';
-import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { z } from 'zod';
 import axios from 'axios';
+import { randomUUID } from 'crypto';
 
 const app = express();
 
-// CORS
+// --- 中间件（完整复制 spicy-monopoly） ---
 app.use((req, res, next) => {
+  // 强制 Accept 头，确保前端识别 MCP
+  const desired = 'application/json, text/event-stream';
+  const accept = String(req.headers.accept || '');
+  if (!accept.includes('application/json') || !accept.includes('text/event-stream')) {
+    req.headers.accept = desired;
+  }
+  // CORS
   res.header('Access-Control-Allow-Origin', '*');
   res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept');
   res.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
   if (req.method === 'OPTIONS') {
-    res.sendStatus(200);
-    return;
+    return res.sendStatus(200);
   }
   next();
 });
 app.use(express.json());
 
-// ===== 创建 MCP 服务器 =====
+// --- 创建 MCP 服务器 ---
 const server = new McpServer({
   name: 'xhs-reader',
   version: '1.0.0'
 });
 
-// ===== 工具：读取小红书 =====
+// ==================== 你的工具 ====================
 server.tool(
   "xhs_read",
   "读取小红书帖子内容（文字+图片）",
@@ -37,7 +44,10 @@ server.tool(
     try {
       let realUrl = url;
       if (url.includes('xhslink.com')) {
-        const resp = await axios.get(url, { maxRedirects: 0, validateStatus: (s) => s === 301 || s === 302 });
+        const resp = await axios.get(url, {
+          maxRedirects: 0,
+          validateStatus: (s) => s === 301 || s === 302
+        });
         realUrl = resp.headers.location;
         if (!realUrl) throw new Error('无法解析短链');
       }
@@ -65,7 +75,7 @@ server.tool(
   }
 );
 
-// ===== 占位工具 =====
+// 占位工具（保留）
 server.tool(
   "chat_history",
   "获取会话历史（占位）",
@@ -75,40 +85,13 @@ server.tool(
   })
 );
 
-// ===== 创建 transport（用于 /mcp） =====
+// --- 传输层 ---
 const transport = new StreamableHTTPServerTransport({
-  sessionIdGenerator: () => crypto.randomUUID()
+  sessionIdGenerator: () => randomUUID()
 });
 
-// ===== 根路径：直接返回 JSON（让测试通过） =====
-app.all('/', (req, res) => {
-  // 无论 GET 还是 POST，都返回这个 JSON，前端测试必过
-  res.json({
-    jsonrpc: "2.0",
-    id: 0,
-    result: {
-      protocolVersion: "1.0",
-      serverInfo: { name: "xhs-reader", version: "1.0.0" },
-      capabilities: { tools: {} }
-    }
-  });
-});
-
-// ===== /mcp：真正的 MCP 处理器 =====
-app.all('/mcp', async (req, res) => {
-  // 如果是 GET 请求，也返回初始化 JSON（兼容某些前端）
-  if (req.method === 'GET') {
-    return res.json({
-      jsonrpc: "2.0",
-      id: 0,
-      result: {
-        protocolVersion: "1.0",
-        serverInfo: { name: "xhs-reader", version: "1.0.0" },
-        capabilities: { tools: {} }
-      }
-    });
-  }
-  // POST 请求交给 transport
+// --- 路由：根路径和 /mcp 都指向 transport ---
+app.all('/', async (req, res) => {
   try {
     await transport.handleRequest(req, res);
   } catch (error) {
@@ -116,11 +99,20 @@ app.all('/mcp', async (req, res) => {
   }
 });
 
-// ===== 健康检查 =====
+app.all('/mcp', async (req, res) => {
+  try {
+    await transport.handleRequest(req, res);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// 健康检查
 app.get('/health', (req, res) => res.send('OK'));
 
-// ===== 启动 =====
+// --- 启动 ---
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`✅ MCP server running on port ${PORT}`);
+  console.log(`📍 Endpoint: / or /mcp`);
 });
